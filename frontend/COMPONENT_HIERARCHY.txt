@@ -1,0 +1,155 @@
+COMPONENT HIERARCHY
+===================
+
+App.tsx (Root)
+├── QueryClientProvider (TanStack Query)
+│   └── AppContent
+│       ├── Header
+│       │   └── Title + Description
+│       ├── Tabs Navigation
+│       │   ├── "Single Stock Analysis" (active state)
+│       │   └── "Bulk Screener" (active state)
+│       └── Content Area
+│           ├── [Tab: Single Stock Analysis]
+│           │   ├── TickerSearch
+│           │   │   ├── Input Field
+│           │   │   └── Analyze Button
+│           │   ├── Loading State (spinner + message)
+│           │   ├── Error State (red error box)
+│           │   ├── ScoreCard (when data loaded)
+│           │   │   ├── Header Section
+│           │   │   │   ├── Ticker + Name
+│           │   │   │   ├── Price + Market Cap + Exchange
+│           │   │   │   ├── ScoreGauge (large circular gauge)
+│           │   │   │   └── Classification Badge
+│           │   │   ├── Yartseva Factor Breakdown
+│           │   │   │   ├── FactorRow: FCF Yield [MOST IMPORTANT]
+│           │   │   │   ├── FactorRow: ROIC
+│           │   │   │   ├── FactorRow: Earnings Quality
+│           │   │   │   ├── FactorRow: Leverage
+│           │   │   │   ├── FactorRow: Growth
+│           │   │   │   ├── FactorRow: Earnings Surprise
+│           │   │   │   ├── FactorRow: Price Range [CONTRARIAN]
+│           │   │   │   ├── FactorRow: Momentum [CONTRARIAN]
+│           │   │   │   └── FactorRow: Size
+│           │   │   └── Methodology Note
+│           │   └── Empty State (search icon + prompt)
+│           └── [Tab: Bulk Screener]
+│               ├── Exchange Selection Panel
+│               │   ├── Exchange Buttons (NSE, BSE, NASDAQ, NYSE)
+│               │   └── "Screen All" Button
+│               ├── Loading State (spinner + message)
+│               ├── Error State (red error box)
+│               ├── Results Table
+│               │   ├── Table Header
+│               │   │   ├── Rank
+│               │   │   ├── Ticker
+│               │   │   ├── Name
+│               │   │   ├── Score
+│               │   │   ├── Classification
+│               │   │   ├── Price
+│               │   │   └── Market Cap
+│               │   └── Table Rows (hover effects)
+│               └── Empty State (no results message)
+
+COMPONENT DETAILS
+=================
+
+ScoreGauge Component Props:
+- score: number
+- maxScore: number
+- size: 'sm' | 'md' | 'lg'
+
+Renders:
+- SVG circle (background)
+- SVG circle (colored progress)
+- Center text (score / maxScore)
+- Colors: green (75%+), yellow (50%+), orange (25%+), red (<25%)
+
+FactorRow Component Props:
+- label: string
+- score: number
+- maxScore: number
+- rationale: string
+- isImportant?: boolean (shows "MOST IMPORTANT" badge)
+- isContrarian?: boolean (shows "CONTRARIAN" badge)
+
+Renders:
+- Label + Badges
+- Score display
+- Progress bar
+- Rationale text
+
+DATA FLOW
+=========
+
+1. Single Stock Analysis:
+   User types ticker → TickerSearch
+   → handleSearch() triggered
+   → setSearchTicker() + setShouldFetch(true)
+   → useStockScreen() hook activates
+   → TanStack Query calls api.screenStock()
+   → Fetch GET /screen/{ticker}
+   → Response cached by TanStack Query
+   → ScoreCard renders with data
+
+2. Bulk Screening:
+   User selects exchange → BulkScreener
+   → setSelectedExchange()
+   User clicks "Screen All" → setIsScreening(true)
+   → useBulkScreen() hook activates
+   → TanStack Query calls api.bulkScreen()
+   → Fetch GET /bulk-screen/{exchange}
+   → Response cached by TanStack Query
+   → Results table renders
+
+STATE MANAGEMENT
+================
+
+App-level State:
+- activeTab: 'single' | 'bulk'
+- searchTicker: string
+- shouldFetch: boolean
+
+BulkScreener State:
+- selectedExchange: 'NSE' | 'BSE' | 'NASDAQ' | 'NYSE'
+- isScreening: boolean
+
+TanStack Query manages:
+- Loading states
+- Error states
+- Data caching
+- Refetch logic
+- Stale time (5 min single, 10 min bulk)
+
+STYLING SYSTEM
+==============
+
+Color Palette:
+- Primary: blue-600 (#2563EB)
+- Background: slate-50 (#F8FAFC)
+- Text: slate-900 (#0F172A)
+- Success: green-600 (#16A34A)
+- Warning: yellow-600 (#CA8A04)
+- Alert: orange-600 (#EA580C)
+- Danger: red-600 (#DC2626)
+
+Classification Colors:
+- STRONG BUY: green-100 bg, green-800 text
+- MODERATE BUY: yellow-100 bg, yellow-800 text
+- WEAK BUY: orange-100 bg, orange-800 text
+- AVOID: red-100 bg, red-800 text
+
+Layout:
+- Max width: 7xl (80rem / 1280px)
+- Padding: px-4 (1rem)
+- Gaps: gap-3 to gap-8
+- Rounded corners: rounded-lg (0.5rem)
+- Shadows: shadow-lg
+
+Typography:
+- Headers: font-bold text-2xl/3xl
+- Body: text-sm/base
+- Labels: font-semibold
+- Badges: text-xs font-bold
+
