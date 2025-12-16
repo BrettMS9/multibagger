@@ -107,9 +107,10 @@ class ScreenController {
           }
         }
 
-        // Step 2: SEC EDGAR for growth metrics (PRIMARY SOURCE - most accurate)
-        if (missingGrowthMetrics) {
-          console.log(`Missing growth metrics for ${upperTicker}, fetching from SEC EDGAR...`);
+        // Step 2: SEC EDGAR for growth metrics and EBITDA margin (PRIMARY SOURCE - most accurate)
+        const missingEbitdaMargin = stockData.ebitdaMargin === null;
+        if (missingGrowthMetrics || missingEbitdaMargin) {
+          console.log(`Missing metrics for ${upperTicker}, fetching from SEC EDGAR...`);
           try {
             const edgarData = await edgarService.getGrowthMetrics(upperTicker);
             if (stockData.ebitdaGrowth === null && edgarData.ebitdaGrowth !== null) {
@@ -119,6 +120,10 @@ class ScreenController {
             if (stockData.assetGrowth === null && edgarData.assetGrowth !== null) {
               stockData.assetGrowth = edgarData.assetGrowth;
               console.log(`  - Got assetGrowth from EDGAR: ${edgarData.assetGrowth.toFixed(1)}%`);
+            }
+            if (stockData.ebitdaMargin === null && edgarData.ebitdaMargin !== null) {
+              stockData.ebitdaMargin = edgarData.ebitdaMargin;
+              console.log(`  - Got ebitdaMargin from EDGAR: ${edgarData.ebitdaMargin.toFixed(1)}%`);
             }
           } catch (edgarError) {
             console.warn(`EDGAR fallback failed for ${upperTicker}:`, edgarError);

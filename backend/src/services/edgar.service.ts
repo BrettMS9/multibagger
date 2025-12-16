@@ -92,6 +92,9 @@ export interface EdgarFinancials {
   // Historical Book Value (Stockholders Equity)
   bookValueHistory: { year: number; value: number }[];
 
+  // Historical Revenue
+  revenueHistory: { year: number; value: number }[];
+
   // Calculated growth rates (3-year CAGR)
   ebitdaGrowth: number | null;
   assetGrowth: number | null;
@@ -101,6 +104,10 @@ export interface EdgarFinancials {
   latestAssets: number | null;
   latestFcf: number | null;
   latestBookValue: number | null;
+  latestRevenue: number | null;
+
+  // Calculated margins
+  ebitdaMargin: number | null;
 
   // Metadata
   lastFiscalYear: number;
@@ -143,10 +150,19 @@ class EdgarService {
         operating_cash_flow REAL,
         capex REAL,
         stockholders_equity REAL,
+        revenue REAL,
         fetched_at INTEGER NOT NULL,
         PRIMARY KEY (ticker, fiscal_year)
       )
     `).run();
+
+    // Add revenue column if it doesn't exist (migration for existing DBs)
+    try {
+      db.prepare('SELECT revenue FROM edgar_financials LIMIT 1').get();
+    } catch {
+      db.prepare('ALTER TABLE edgar_financials ADD COLUMN revenue REAL').run();
+      console.log('EDGAR: Added revenue column to edgar_financials table');
+    }
 
     // Create index
     const indexExists = db.prepare(`
@@ -345,6 +361,7 @@ class EdgarService {
     const assetHistory: { year: number; value: number }[] = [];
     const fcfHistory: { year: number; value: number }[] = [];
     const bookValueHistory: { year: number; value: number }[] = [];
+    const revenueHistory: { year: number; value: number }[] = [];
 
     for (const row of rows) {
       if (row.ebitda !== null) {
@@ -359,6 +376,17 @@ class EdgarService {
       if (row.book_value !== null) {
         bookValueHistory.push({ year: row.fiscal_year, value: row.book_value });
       }
+      if (row.revenue !== null) {
+        revenueHistory.push({ year: row.fiscal_year, value: row.revenue });
+      }
+    }
+
+    // Calculate EBITDA margin from latest data
+    const latestEbitda = ebitdaHistory[0]?.value || null;
+    const latestRevenue = revenueHistory[0]?.value || null;
+    let ebitdaMargin: number | null = null;
+    if (latestEbitda !== null && latestRevenue !== null && latestRevenue > 0) {
+      ebitdaMargin = (latestEbitda / latestRevenue) * 100;
     }
 
     return {
@@ -369,12 +397,15 @@ class EdgarService {
       assetHistory,
       fcfHistory,
       bookValueHistory,
+      revenueHistory,
       ebitdaGrowth: this.calculateCAGR(ebitdaHistory),
       assetGrowth: this.calculateCAGR(assetHistory),
-      latestEbitda: ebitdaHistory[0]?.value || null,
+      latestEbitda,
       latestAssets: assetHistory[0]?.value || null,
       latestFcf: fcfHistory[0]?.value || null,
       latestBookValue: bookValueHistory[0]?.value || null,
+      latestRevenue,
+      ebitdaMargin,
       lastFiscalYear: rows[0].fiscal_year,
       dataSource: 'edgar',
       fetchedAt: rows[0].fetched_at,
@@ -397,14 +428,15 @@ class EdgarService {
       operatingCashFlow?: number | null;
       capex?: number | null;
       stockholdersEquity?: number | null;
+      revenue?: number | null;
     }
   ): void {
     db.prepare(`
       INSERT OR REPLACE INTO edgar_financials (
         ticker, fiscal_year, ebitda, total_assets, free_cash_flow, book_value,
         operating_income, depreciation, operating_cash_flow, capex,
-        stockholders_equity, fetched_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        stockholders_equity, revenue, fetched_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       ticker.toUpperCase(),
       year,
@@ -417,6 +449,7 @@ class EdgarService {
       data.operatingCashFlow ?? null,
       data.capex ?? null,
       data.stockholdersEquity ?? null,
+      data.revenue ?? null,
       Date.now()
     );
   }
@@ -485,6 +518,18 @@ class EdgarService {
     // Total Assets
     const assetHistory = this.extractAnnualValues(facts, namespace, 'Assets');
 
+    // Revenue (for EBITDA margin calculation)
+    let revenueHistory = this.extractAnnualValues(facts, namespace, 'Revenues');
+    if (revenueHistory.length === 0) {
+      revenueHistory = this.extractAnnualValues(facts, namespace, 'RevenueFromContractWithCustomerExcludingAssessedTax');
+    }
+    if (revenueHistory.length === 0) {
+      revenueHistory = this.extractAnnualValues(facts, namespace, 'SalesRevenueNet');
+    }
+    if (revenueHistory.length === 0) {
+      revenueHistory = this.extractAnnualValues(facts, namespace, 'RevenueFromContractWithCustomerIncludingAssessedTax');
+    }
+
     // Operating Cash Flow
     let operatingCashFlow = this.extractAnnualValues(facts, namespace, 'NetCashProvidedByUsedInOperatingActivities');
     if (operatingCashFlow.length === 0) {
@@ -515,7 +560,7 @@ class EdgarService {
 
     // Save all years to cache
     const allYears = new Set<number>();
-    [...ebitdaHistory, ...assetHistory, ...fcfHistory, ...bookValueHistory]
+    [...ebitdaHistory, ...assetHistory, ...fcfHistory, ...bookValueHistory, ...revenueHistory]
       .forEach(h => allYears.add(h.year));
 
     for (const year of allYears) {
@@ -527,6 +572,7 @@ class EdgarService {
       const da = depreciation.find(h => h.year === year)?.value;
       const ocf = operatingCashFlow.find(h => h.year === year)?.value;
       const cx = capex.find(h => h.year === year)?.value;
+      const rev = revenueHistory.find(h => h.year === year)?.value;
 
       this.saveFinancials(upperTicker, year, {
         ebitda,
@@ -538,6 +584,7 @@ class EdgarService {
         operatingCashFlow: ocf,
         capex: cx,
         stockholdersEquity: bookValue,
+        revenue: rev,
       });
     }
 
@@ -547,6 +594,14 @@ class EdgarService {
       VALUES (?, ?, ?, ?)
     `).run(upperTicker, cik, companyName, Date.now());
 
+    // Calculate EBITDA margin from latest data
+    const latestEbitda = ebitdaHistory[0]?.value || null;
+    const latestRevenue = revenueHistory[0]?.value || null;
+    let ebitdaMargin: number | null = null;
+    if (latestEbitda !== null && latestRevenue !== null && latestRevenue > 0) {
+      ebitdaMargin = (latestEbitda / latestRevenue) * 100;
+    }
+
     const result: EdgarFinancials = {
       ticker: upperTicker,
       cik,
@@ -555,18 +610,21 @@ class EdgarService {
       assetHistory,
       fcfHistory,
       bookValueHistory,
+      revenueHistory,
       ebitdaGrowth: this.calculateCAGR(ebitdaHistory),
       assetGrowth: this.calculateCAGR(assetHistory),
-      latestEbitda: ebitdaHistory[0]?.value || null,
+      latestEbitda,
       latestAssets: assetHistory[0]?.value || null,
       latestFcf: fcfHistory[0]?.value || null,
       latestBookValue: bookValueHistory[0]?.value || null,
+      latestRevenue,
+      ebitdaMargin,
       lastFiscalYear: Math.max(...Array.from(allYears), 0),
       dataSource: 'edgar',
       fetchedAt: Date.now(),
     };
 
-    console.log(`EDGAR: ${upperTicker} - EBITDA growth: ${result.ebitdaGrowth?.toFixed(1) ?? 'N/A'}%, Asset growth: ${result.assetGrowth?.toFixed(1) ?? 'N/A'}%`);
+    console.log(`EDGAR: ${upperTicker} - EBITDA growth: ${result.ebitdaGrowth?.toFixed(1) ?? 'N/A'}%, Asset growth: ${result.assetGrowth?.toFixed(1) ?? 'N/A'}%, EBITDA margin: ${result.ebitdaMargin?.toFixed(1) ?? 'N/A'}%`);
 
     return result;
   }
@@ -582,17 +640,19 @@ class EdgarService {
   }
 
   /**
-   * Get growth metrics for scoring (convenience method)
+   * Get growth metrics and EBITDA margin for scoring (convenience method)
    */
   async getGrowthMetrics(ticker: string): Promise<{
     ebitdaGrowth: number | null;
     assetGrowth: number | null;
+    ebitdaMargin: number | null;
     source: 'edgar';
   }> {
     const financials = await this.getFinancials(ticker);
     return {
       ebitdaGrowth: financials?.ebitdaGrowth ?? null,
       assetGrowth: financials?.assetGrowth ?? null,
+      ebitdaMargin: financials?.ebitdaMargin ?? null,
       source: 'edgar',
     };
   }
