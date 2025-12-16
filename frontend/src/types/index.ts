@@ -48,6 +48,23 @@ export interface BulkScreenResult {
   classification: 'STRONG BUY' | 'MODERATE BUY' | 'WEAK BUY' | 'AVOID';
   price: number;
   marketCap: number;
+  sector?: string;
+  industry?: string;
+  high52w?: number;
+  low52w?: number;
+  factors?: YartsevaFactors;
 }
 
-export type Exchange = 'NYSE' | 'NASDAQ';
+export type Exchange = 'NYSE' | 'NASDAQ';  // Legacy, kept for compatibility
+
+export type Sector = 'all' | 'technology' | 'healthcare' | 'energy' | 'consumer' | 'industrial' | 'financial';
+
+export const SECTOR_LABELS: Record<Sector, string> = {
+  all: 'All Russell 2000',
+  technology: 'Technology',
+  healthcare: 'Healthcare & Biotech',
+  energy: 'Energy',
+  consumer: 'Consumer',
+  industrial: 'Industrial',
+  financial: 'Financial',
+};

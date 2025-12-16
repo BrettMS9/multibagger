@@ -96,19 +96,24 @@ export interface StockData {
 }
 
 class FMPApiService {
-  private apiKey: string;
-  private baseUrl = 'https://financialmodelingprep.com/api/v3';
+  private _apiKey: string | null = null;
+  private baseUrl = 'https://financialmodelingprep.com/stable';
 
-  constructor() {
-    this.apiKey = process.env.FMP_API_KEY || '';
-    if (!this.apiKey) {
-      console.warn('FMP_API_KEY not set in environment variables');
+  // Lazy load API key to ensure dotenv has loaded
+  private get apiKey(): string {
+    if (this._apiKey === null) {
+      this._apiKey = process.env.FMP_API_KEY || '';
+      if (!this._apiKey) {
+        console.warn('FMP_API_KEY not set in environment variables');
+      }
     }
+    return this._apiKey;
   }
 
   private async fetchWithRateLimit<T>(url: string): Promise<T> {
     return fmpLimiter.schedule(async () => {
-      const fullUrl = url.includes('?') ? `${url}&apikey=${this.apiKey}` : `${url}?apikey=${this.apiKey}`;
+      const separator = url.includes('?') ? '&' : '?';
+      const fullUrl = `${url}${separator}apikey=${this.apiKey}`;
       const response = await fetch(fullUrl);
 
       if (!response.ok) {
@@ -122,9 +127,9 @@ class FMPApiService {
   }
 
   async getCompanyProfile(ticker: string): Promise<CompanyProfile> {
-    const url = `${this.baseUrl}/profile/${ticker}`;
+    const url = `${this.baseUrl}/profile?symbol=${ticker}`;
     const data = await this.fetchWithRateLimit<any[]>(url);
-    
+
     if (!data || data.length === 0) {
       throw new Error(`No profile data found for ticker: ${ticker}`);
     }
@@ -141,9 +146,9 @@ class FMPApiService {
   }
 
   async getQuote(ticker: string): Promise<Quote> {
-    const url = `${this.baseUrl}/quote/${ticker}`;
+    const url = `${this.baseUrl}/quote?symbol=${ticker}`;
     const data = await this.fetchWithRateLimit<any[]>(url);
-    
+
     if (!data || data.length === 0) {
       throw new Error(`No quote data found for ticker: ${ticker}`);
     }
@@ -163,9 +168,9 @@ class FMPApiService {
   }
 
   async getKeyMetrics(ticker: string, period: 'annual' | 'quarter' = 'annual', limit = 5): Promise<KeyMetrics[]> {
-    const url = `${this.baseUrl}/key-metrics/${ticker}?period=${period}&limit=${limit}`;
+    const url = `${this.baseUrl}/key-metrics?symbol=${ticker}&period=${period}&limit=${limit}`;
     const data = await this.fetchWithRateLimit<any[]>(url);
-    
+
     if (!data || data.length === 0) {
       return [];
     }
@@ -187,9 +192,9 @@ class FMPApiService {
   }
 
   async getFinancialRatios(ticker: string, period: 'annual' | 'quarter' = 'annual', limit = 5): Promise<FinancialRatios[]> {
-    const url = `${this.baseUrl}/ratios/${ticker}?period=${period}&limit=${limit}`;
+    const url = `${this.baseUrl}/ratios?symbol=${ticker}&period=${period}&limit=${limit}`;
     const data = await this.fetchWithRateLimit<any[]>(url);
-    
+
     if (!data || data.length === 0) {
       return [];
     }
@@ -208,9 +213,9 @@ class FMPApiService {
   }
 
   async getIncomeStatement(ticker: string, period: 'annual' | 'quarter' = 'annual', limit = 5): Promise<IncomeStatement[]> {
-    const url = `${this.baseUrl}/income-statement/${ticker}?period=${period}&limit=${limit}`;
+    const url = `${this.baseUrl}/income-statement?symbol=${ticker}&period=${period}&limit=${limit}`;
     const data = await this.fetchWithRateLimit<any[]>(url);
-    
+
     if (!data || data.length === 0) {
       return [];
     }
@@ -226,9 +231,9 @@ class FMPApiService {
   }
 
   async getBalanceSheet(ticker: string, period: 'annual' | 'quarter' = 'annual', limit = 5): Promise<BalanceSheet[]> {
-    const url = `${this.baseUrl}/balance-sheet-statement/${ticker}?period=${period}&limit=${limit}`;
+    const url = `${this.baseUrl}/balance-sheet-statement?symbol=${ticker}&period=${period}&limit=${limit}`;
     const data = await this.fetchWithRateLimit<any[]>(url);
-    
+
     if (!data || data.length === 0) {
       return [];
     }
@@ -243,9 +248,9 @@ class FMPApiService {
   }
 
   async getCashFlowStatement(ticker: string, period: 'annual' | 'quarter' = 'annual', limit = 5): Promise<CashFlowStatement[]> {
-    const url = `${this.baseUrl}/cash-flow-statement/${ticker}?period=${period}&limit=${limit}`;
+    const url = `${this.baseUrl}/cash-flow-statement?symbol=${ticker}&period=${period}&limit=${limit}`;
     const data = await this.fetchWithRateLimit<any[]>(url);
-    
+
     if (!data || data.length === 0) {
       return [];
     }
@@ -283,7 +288,8 @@ class FMPApiService {
   }
 
   async getExchangeSymbols(exchange: 'NYSE' | 'NASDAQ'): Promise<string[]> {
-    const url = `${this.baseUrl}/symbol/${exchange}`;
+    // Use stock-list endpoint and filter by exchange, or use batch-exchange-quote
+    const url = `${this.baseUrl}/stock-list`;
     const data = await this.fetchWithRateLimit<any[]>(url);
 
     if (!data || data.length === 0) {
@@ -291,7 +297,7 @@ class FMPApiService {
     }
 
     return data
-      .filter(item => item.symbol && item.type === 'stock')
+      .filter(item => item.symbol && item.exchangeShortName === exchange && item.type === 'stock')
       .map(item => item.symbol);
   }
 
@@ -301,10 +307,20 @@ class FMPApiService {
    */
   async getHistoricalPrice(ticker: string, daysAgo: number = 180): Promise<number | null> {
     try {
-      const url = `${this.baseUrl}/historical-price-full/${ticker}?serietype=line`;
-      const data = await this.fetchWithRateLimit<{ historical: Array<{ date: string; close: number }> }>(url);
+      const url = `${this.baseUrl}/historical-price-eod/full?symbol=${ticker}`;
+      const data = await this.fetchWithRateLimit<{ historical: Array<{ date: string; close: number }> } | any[]>(url);
 
-      if (!data || !data.historical || data.historical.length === 0) {
+      // Handle both response formats (array or object with historical property)
+      let historical: Array<{ date: string; close: number }>;
+      if (Array.isArray(data)) {
+        historical = data;
+      } else if (data && data.historical) {
+        historical = data.historical;
+      } else {
+        return null;
+      }
+
+      if (historical.length === 0) {
         return null;
       }
 
@@ -313,9 +329,6 @@ class FMPApiService {
       targetDate.setDate(targetDate.getDate() - daysAgo);
 
       // Historical data is sorted newest first
-      const historical = data.historical;
-
-      // Find the entry closest to our target date
       for (const entry of historical) {
         const entryDate = new Date(entry.date);
         if (entryDate <= targetDate) {

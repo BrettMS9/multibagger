@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../services/api';
-import type { Exchange } from '../types';
+import type { Sector, BulkScreenResult } from '../types';
+import type { BulkScreenStats } from '../services/api';
 
 export const useStockScreen = (ticker: string, enabled: boolean = false) => {
   return useQuery({
@@ -12,10 +13,10 @@ export const useStockScreen = (ticker: string, enabled: boolean = false) => {
   });
 };
 
-export const useBulkScreen = (exchange: Exchange, enabled: boolean = false) => {
-  return useQuery({
-    queryKey: ['bulk-screen', exchange],
-    queryFn: () => api.bulkScreen(exchange),
+export const useBulkScreen = (sector: Sector, enabled: boolean = false) => {
+  return useQuery<{ results: BulkScreenResult[]; stats: BulkScreenStats }>({
+    queryKey: ['bulk-screen', sector],
+    queryFn: () => api.bulkScreen(sector),
     enabled,
     retry: false,
     staleTime: 10 * 60 * 1000, // 10 minutes

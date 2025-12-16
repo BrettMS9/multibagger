@@ -1,10 +1,10 @@
-import express from 'express';
+// Load environment variables FIRST - before any other imports
 import dotenv from 'dotenv';
+dotenv.config();
+
+import express from 'express';
 import screenRoutes from './routes/screen.routes';
 import cacheRoutes from './routes/cache.routes';
-
-// Load environment variables
-dotenv.config();
 
 // Initialize Express app
 const app = express();
@@ -80,8 +80,9 @@ app.listen(PORT, () => {
   console.log('  - DEL  /api/cache/all');
   console.log('');
   console.log('API Keys configured:');
-  console.log(`  - FMP_API_KEY: ${process.env.FMP_API_KEY ? 'configured' : 'MISSING (required)'}`);
-  console.log(`  - GEMINI_API_KEY: ${process.env.GEMINI_API_KEY ? 'configured' : 'not set (optional fallback)'}`);
+  console.log(`  - GEMINI_API_KEY: ${process.env.GEMINI_API_KEY ? 'configured' : 'MISSING (primary data source)'}`);
+  console.log(`  - ALPHAVANTAGE_API_KEY: ${process.env.ALPHAVANTAGE_API_KEY ? 'configured' : 'not set (optional - growth metrics)'}`);
+  console.log(`  - FMP_API_KEY: ${process.env.FMP_API_KEY ? 'configured' : 'not set (optional - bulk symbols)'}`);
 });
 
 export default app;

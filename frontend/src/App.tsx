@@ -4,11 +4,12 @@ import { Header } from './components/Header';
 import { TickerSearch } from './components/TickerSearch';
 import { ScoreCard } from './components/ScoreCard';
 import { BulkScreener } from './components/BulkScreener';
+import { FAQ } from './components/FAQ';
 import { useStockScreen } from './hooks/useStockScreen';
 
 const queryClient = new QueryClient();
 
-type Tab = 'single' | 'bulk';
+type Tab = 'single' | 'bulk' | 'faq';
 
 function AppContent() {
   const [activeTab, setActiveTab] = useState<Tab>('single');
@@ -55,12 +56,25 @@ function AppContent() {
               <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600"></div>
             )}
           </button>
+          <button
+            onClick={() => setActiveTab('faq')}
+            className={`px-6 py-3 font-semibold transition-colors relative ${
+              activeTab === 'faq'
+                ? 'text-blue-600'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            How It Works
+            {activeTab === 'faq' && (
+              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600"></div>
+            )}
+          </button>
         </div>
       </div>
 
       {/* Content */}
       <div className="max-w-7xl mx-auto px-4 py-8">
-        {activeTab === 'single' ? (
+        {activeTab === 'single' && (
           <div>
             <div className="mb-8">
               <TickerSearch onSearch={handleSearch} isLoading={isLoading} />
@@ -110,9 +124,9 @@ function AppContent() {
               </div>
             )}
           </div>
-        ) : (
-          <BulkScreener />
         )}
+        {activeTab === 'bulk' && <BulkScreener />}
+        {activeTab === 'faq' && <FAQ />}
       </div>
     </div>
   );

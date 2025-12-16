@@ -1,8 +1,12 @@
 import { Request, Response } from 'express';
-import { fmpApiService, GrowthMetrics } from '../services/fmp-api.service';
-import { geminiService } from '../services/gemini.service';
+import { geminiService, GeminiStockData } from '../services/gemini.service';
+import { yahooFinanceService } from '../services/yahoo-finance.service';
+import { alphaVantageService } from '../services/alphavantage.service';
+import { edgarService } from '../services/edgar.service';
+import { preScreeningService, PreScreenResult } from '../services/prescreening.service';
 import { cacheService, CachedStockData } from '../services/cache.service';
 import { scoringService, ScoringInput, YartsevaScores } from '../services/scoring.service';
+import { RUSSELL_2000_STOCKS, SECTORS } from '../data/russell2000';
 import db from '../config/database';
 
 export interface ScreeningResult {
@@ -52,77 +56,93 @@ class ScreenController {
         stockData = cached;
         dataSource = 'cache';
       } else {
-        console.log(`Fetching fresh data for ${upperTicker}`);
+        console.log(`Fetching fresh data for ${upperTicker} via Gemini`);
 
-        // Fetch from FMP API
-        const fmpData = await fmpApiService.getStockData(upperTicker);
+        // Fetch from Gemini with Google Search grounding
+        const geminiData = await geminiService.getStockData(upperTicker);
 
-        // Extract latest metrics
-        const latestMetrics = fmpData.keyMetrics[0];
-        const latestRatios = fmpData.ratios[0];
-        const latestCashFlow = fmpData.cashFlow[0];
-        const latestBalance = fmpData.balance[0];
+        console.log(`Got data for ${upperTicker}: ${geminiData.companyName}, price=$${geminiData.price}`);
 
-        // Get historical price for momentum (6 months ago)
-        const price6MonthsAgo = await fmpApiService.getHistoricalPrice(upperTicker, 180);
-
-        // Get dividend info
-        const dividendInfo = await fmpApiService.getDividendInfo(upperTicker);
-
-        // HYBRID APPROACH: Get growth metrics
-        // 1. Primary: Calculate from FMP historical data (free, fast, accurate)
-        // 2. Fallback: Use Gemini with Google Search grounding if FMP data insufficient
-        let growthMetrics: GrowthMetrics = await fmpApiService.calculateGrowthMetrics(upperTicker);
-
-        // If FMP couldn't calculate both metrics, try Gemini as fallback
-        if ((growthMetrics.ebitdaGrowth === null || growthMetrics.assetGrowth === null)
-            && geminiService.isAvailable()) {
-          console.log(`FMP data incomplete for ${upperTicker}, trying Gemini fallback...`);
-          const geminiMetrics = await geminiService.searchGrowthMetrics(
-            upperTicker,
-            fmpData.profile.companyName
-          );
-
-          // Merge: prefer FMP data, fill gaps with Gemini
-          growthMetrics = {
-            ebitdaGrowth: growthMetrics.ebitdaGrowth ?? geminiMetrics.ebitdaGrowth,
-            assetGrowth: growthMetrics.assetGrowth ?? geminiMetrics.assetGrowth,
-            source: growthMetrics.source === 'fmp' ? 'fmp' : geminiMetrics.source,
-          };
-        }
-
-        const assetGrowth = growthMetrics.assetGrowth ?? undefined;
-        const ebitdaGrowth = growthMetrics.ebitdaGrowth ?? undefined;
-        console.log(`Growth metrics for ${upperTicker}: EBITDA=${ebitdaGrowth}, Assets=${assetGrowth} (source: ${growthMetrics.source})`);
-
-        // Calculate book value from balance sheet
-        const bookValue = latestBalance?.totalStockholdersEquity || null;
-
-        // Build cached data
+        // Build cached data from Gemini response
         stockData = {
           ticker: upperTicker,
-          companyName: fmpData.profile.companyName,
-          sector: fmpData.profile.sector,
-          industry: fmpData.profile.industry,
-          marketCap: fmpData.profile.marketCap,
-          price: fmpData.quote.price,
-          high52w: fmpData.quote.yearHigh,
-          low52w: fmpData.quote.yearLow,
-          fcf: latestCashFlow?.freeCashFlow || null,
-          bookValue: bookValue,
-          totalAssets: latestBalance?.totalAssets || null,
+          companyName: geminiData.companyName,
+          sector: geminiData.sector,
+          industry: geminiData.industry,
+          marketCap: geminiData.marketCap,
+          price: geminiData.price,
+          high52w: geminiData.high52w,
+          low52w: geminiData.low52w,
+          fcf: geminiData.freeCashFlow,
+          bookValue: geminiData.bookValue,
+          totalAssets: geminiData.totalAssets,
           ebitda: null, // Not used directly
-          ebitdaMargin: latestRatios?.ebitdaMargin ? latestRatios.ebitdaMargin * 100 : null, // Convert to percentage
-          roa: latestRatios?.returnOnAssets ? latestRatios.returnOnAssets * 100 : null, // Convert to percentage
-          assetGrowth: assetGrowth ?? null,
-          ebitdaGrowth: ebitdaGrowth ?? null,
-          dividendYield: dividendInfo.dividendYield,
-          paysDividend: dividendInfo.paysDividend,
-          peRatio: latestMetrics?.peRatio || fmpData.quote.pe || null,
-          pbRatio: latestMetrics?.pbRatio || null,
-          price6MonthsAgo: price6MonthsAgo,
+          ebitdaMargin: geminiData.ebitdaMargin,
+          roa: geminiData.roa,
+          assetGrowth: geminiData.assetGrowth,
+          ebitdaGrowth: geminiData.ebitdaGrowth,
+          dividendYield: geminiData.dividendYield,
+          paysDividend: geminiData.paysDividend,
+          peRatio: null, // Not fetched via Gemini
+          pbRatio: null, // Not fetched via Gemini
+          price6MonthsAgo: geminiData.price6MonthsAgo,
           dataFetchedAt: Date.now(),
         };
+
+        // Check if we're missing critical data - use fallback sources
+        const missingHistoricalPrice = stockData.price6MonthsAgo === null;
+        const missingGrowthMetrics = stockData.ebitdaGrowth === null || stockData.assetGrowth === null;
+
+        // Step 1: Yahoo Finance for historical prices
+        if (missingHistoricalPrice) {
+          console.log(`Missing historical price for ${upperTicker}, fetching from Yahoo Finance...`);
+          try {
+            const yahooData = await yahooFinanceService.getCompleteFinancials(upperTicker);
+            if (stockData.price6MonthsAgo === null && yahooData.price6MonthsAgo !== null) {
+              stockData.price6MonthsAgo = yahooData.price6MonthsAgo;
+              console.log(`  - Got price6MonthsAgo from Yahoo: $${yahooData.price6MonthsAgo.toFixed(2)}`);
+            }
+          } catch (yahooError) {
+            console.warn(`Yahoo Finance fallback failed for ${upperTicker}:`, yahooError);
+          }
+        }
+
+        // Step 2: SEC EDGAR for growth metrics (PRIMARY SOURCE - most accurate)
+        if (missingGrowthMetrics) {
+          console.log(`Missing growth metrics for ${upperTicker}, fetching from SEC EDGAR...`);
+          try {
+            const edgarData = await edgarService.getGrowthMetrics(upperTicker);
+            if (stockData.ebitdaGrowth === null && edgarData.ebitdaGrowth !== null) {
+              stockData.ebitdaGrowth = edgarData.ebitdaGrowth;
+              console.log(`  - Got ebitdaGrowth from EDGAR: ${edgarData.ebitdaGrowth.toFixed(1)}%`);
+            }
+            if (stockData.assetGrowth === null && edgarData.assetGrowth !== null) {
+              stockData.assetGrowth = edgarData.assetGrowth;
+              console.log(`  - Got assetGrowth from EDGAR: ${edgarData.assetGrowth.toFixed(1)}%`);
+            }
+          } catch (edgarError) {
+            console.warn(`EDGAR fallback failed for ${upperTicker}:`, edgarError);
+          }
+        }
+
+        // Step 3: Alpha Vantage as last resort (if EDGAR didn't have data)
+        const stillMissingGrowth = stockData.ebitdaGrowth === null || stockData.assetGrowth === null;
+        if (stillMissingGrowth && alphaVantageService.isAvailable()) {
+          console.log(`Still missing growth metrics for ${upperTicker}, trying Alpha Vantage...`);
+          try {
+            const avData = await alphaVantageService.getGrowthMetrics(upperTicker);
+            if (stockData.ebitdaGrowth === null && avData.ebitdaGrowth !== null) {
+              stockData.ebitdaGrowth = avData.ebitdaGrowth;
+              console.log(`  - Got ebitdaGrowth from Alpha Vantage: ${avData.ebitdaGrowth.toFixed(1)}%`);
+            }
+            if (stockData.assetGrowth === null && avData.assetGrowth !== null) {
+              stockData.assetGrowth = avData.assetGrowth;
+              console.log(`  - Got assetGrowth from Alpha Vantage: ${avData.assetGrowth.toFixed(1)}%`);
+            }
+          } catch (avError) {
+            console.warn(`Alpha Vantage fallback failed for ${upperTicker}:`, avError);
+          }
+        }
 
         // Save to cache
         cacheService.saveStockData(stockData);
@@ -315,6 +335,310 @@ class ScreenController {
     } catch (error) {
       console.error('Error getting ticker history:', error);
       res.status(500).json({ error: 'Failed to get ticker history' });
+    }
+  }
+
+  /**
+   * Bulk screen stocks from Russell 2000 index
+   * Uses 2-tier screening: Yahoo pre-filter → Gemini full analysis
+   */
+  async bulkScreen(req: Request, res: Response): Promise<void> {
+    try {
+      const { exchange } = req.params;
+      const limit = Math.min(parseInt(req.query.limit as string) || 25, 50);
+      const minMarketCap = parseFloat(req.query.minMarketCap as string) || 0;
+      const maxMarketCap = parseFloat(req.query.maxMarketCap as string) || Infinity;
+      const sector = req.query.sector as string | undefined;
+      const skipPreScreen = req.query.skipPreScreen === 'true';
+
+      // Support both old exchange params and new sector params
+      let allSymbols: string[];
+      let screeningLabel: string;
+
+      if (sector && SECTORS[sector.toLowerCase() as keyof typeof SECTORS]) {
+        allSymbols = SECTORS[sector.toLowerCase() as keyof typeof SECTORS];
+        screeningLabel = `${sector} sector`;
+      } else if (exchange && ['NYSE', 'NASDAQ', 'RUSSELL2000', 'R2000'].includes(exchange.toUpperCase())) {
+        allSymbols = RUSSELL_2000_STOCKS;
+        screeningLabel = 'Russell 2000';
+      } else {
+        allSymbols = RUSSELL_2000_STOCKS;
+        screeningLabel = 'Russell 2000';
+      }
+
+      console.log(`\n${'='.repeat(60)}`);
+      console.log(`Bulk screening ${screeningLabel} (limit: ${limit})`);
+      console.log(`Universe: ${allSymbols.length} stocks`);
+
+      // Check which symbols we've already screened (within last 24 hours)
+      const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+      const cachedStmt = db.prepare(`
+        SELECT ticker FROM screening_results
+        WHERE screened_at > ?
+        GROUP BY ticker
+      `);
+      const cachedTickers = new Set(
+        (cachedStmt.all(oneDayAgo) as { ticker: string }[]).map(r => r.ticker)
+      );
+
+      // Get uncached symbols
+      const uncachedSymbols = allSymbols.filter(s => !cachedTickers.has(s));
+      console.log(`Cached (24h): ${cachedTickers.size}, Uncached: ${uncachedSymbols.length}`);
+
+      let symbolsToScreen: string[];
+      let preScreenResults: PreScreenResult[] = [];
+
+      if (skipPreScreen || uncachedSymbols.length <= limit) {
+        // Skip pre-screening if explicitly requested or few stocks to screen
+        symbolsToScreen = uncachedSymbols.slice(0, limit);
+        console.log(`Skipping pre-screen, using first ${symbolsToScreen.length} symbols`);
+      } else {
+        // TIER 1: Yahoo Finance Pre-Screening
+        console.log(`\nTIER 1: Pre-screening ${uncachedSymbols.length} stocks with Yahoo Finance...`);
+        const preScreenStart = Date.now();
+
+        preScreenResults = await preScreeningService.preScreenForBulk(
+          uncachedSymbols,
+          limit * 2  // Get 2x candidates in case some fail
+        );
+
+        const preScreenTime = ((Date.now() - preScreenStart) / 1000).toFixed(1);
+        console.log(`Pre-screen complete in ${preScreenTime}s`);
+        console.log(`Top candidates by contrarian score (Price Range + Momentum):`);
+
+        // Log top 10 pre-screen results
+        preScreenResults.slice(0, 10).forEach((r, i) => {
+          const momentum = r.momentumPercent !== null ? `${r.momentumPercent.toFixed(1)}%` : 'N/A';
+          console.log(
+            `  ${i + 1}. ${r.ticker}: ${r.preScreenScore}/15 pts ` +
+            `(Range: ${r.priceRangePercent.toFixed(0)}% = ${r.priceRangeScore}pts, ` +
+            `Mom: ${momentum} = ${r.momentumScore}pts)`
+          );
+        });
+
+        symbolsToScreen = preScreenResults.slice(0, limit).map(r => r.ticker);
+      }
+
+      console.log(`\nTIER 2: Full Gemini analysis for ${symbolsToScreen.length} candidates...`);
+
+      // TIER 2: Full Gemini + Yartseva Scoring
+      const results: ScreeningResult[] = [];
+      const errors: { ticker: string; error: string }[] = [];
+
+      for (const symbol of symbolsToScreen) {
+        try {
+          const result = await this.screenTickerInternal(symbol);
+          if (result) {
+            if (result.marketCap >= minMarketCap && result.marketCap <= maxMarketCap) {
+              results.push(result);
+            }
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Unknown error';
+          errors.push({ ticker: symbol, error: message });
+          console.warn(`Failed to screen ${symbol}: ${message}`);
+        }
+      }
+
+      // Sort by full Yartseva percentage score
+      results.sort((a, b) => b.percentage - a.percentage);
+
+      console.log(`\nResults: ${results.length} stocks scored, ${errors.length} errors`);
+      if (results.length > 0) {
+        console.log(`Top result: ${results[0].ticker} - ${results[0].percentage.toFixed(1)}% (${results[0].classification})`);
+      }
+      console.log(`${'='.repeat(60)}\n`);
+
+      res.json({
+        universe: screeningLabel,
+        screened: results.length,
+        errors: errors.length,
+        totalSymbols: allSymbols.length,
+        cachedSymbols: cachedTickers.size,
+        preScreened: preScreenResults.length,
+        results,
+        errorDetails: errors.slice(0, 10),
+      });
+    } catch (error) {
+      console.error('Error in bulk screen:', error);
+      res.status(500).json({
+        error: 'Failed to bulk screen',
+        message: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  }
+
+  /**
+   * Internal method to screen a ticker and return the result directly
+   */
+  private async screenTickerInternal(ticker: string): Promise<ScreeningResult | null> {
+    const upperTicker = ticker.toUpperCase();
+
+    // Check cache first
+    const cached = cacheService.getCachedStock(upperTicker);
+
+    let stockData: CachedStockData;
+    let dataSource: 'cache' | 'api' = 'api';
+
+    if (cached) {
+      stockData = cached;
+      dataSource = 'cache';
+    } else {
+      // Fetch from Gemini with Google Search grounding
+      const geminiData = await geminiService.getStockData(upperTicker);
+
+      stockData = {
+        ticker: upperTicker,
+        companyName: geminiData.companyName,
+        sector: geminiData.sector,
+        industry: geminiData.industry,
+        marketCap: geminiData.marketCap,
+        price: geminiData.price,
+        high52w: geminiData.high52w,
+        low52w: geminiData.low52w,
+        fcf: geminiData.freeCashFlow,
+        bookValue: geminiData.bookValue,
+        totalAssets: geminiData.totalAssets,
+        ebitda: null,
+        ebitdaMargin: geminiData.ebitdaMargin,
+        roa: geminiData.roa,
+        assetGrowth: geminiData.assetGrowth,
+        ebitdaGrowth: geminiData.ebitdaGrowth,
+        dividendYield: geminiData.dividendYield,
+        paysDividend: geminiData.paysDividend,
+        peRatio: null,
+        pbRatio: null,
+        price6MonthsAgo: geminiData.price6MonthsAgo,
+        dataFetchedAt: Date.now(),
+      };
+
+      // Check if we're missing critical data - use fallback sources
+      const missingHistoricalPrice = stockData.price6MonthsAgo === null;
+      const missingGrowthMetrics = stockData.ebitdaGrowth === null || stockData.assetGrowth === null;
+
+      // Step 1: Yahoo Finance for historical prices
+      if (missingHistoricalPrice) {
+        try {
+          const yahooData = await yahooFinanceService.getCompleteFinancials(upperTicker);
+          if (stockData.price6MonthsAgo === null && yahooData.price6MonthsAgo !== null) {
+            stockData.price6MonthsAgo = yahooData.price6MonthsAgo;
+          }
+        } catch {
+          // Silently ignore Yahoo failures in bulk mode
+        }
+      }
+
+      // Step 2: SEC EDGAR for growth metrics (PRIMARY - cached permanently, no limits)
+      if (missingGrowthMetrics) {
+        try {
+          const edgarData = await edgarService.getGrowthMetrics(upperTicker);
+          if (stockData.ebitdaGrowth === null && edgarData.ebitdaGrowth !== null) {
+            stockData.ebitdaGrowth = edgarData.ebitdaGrowth;
+          }
+          if (stockData.assetGrowth === null && edgarData.assetGrowth !== null) {
+            stockData.assetGrowth = edgarData.assetGrowth;
+          }
+        } catch {
+          // Silently ignore EDGAR failures in bulk mode
+        }
+      }
+
+      // Step 3: Alpha Vantage as last resort (if EDGAR didn't have data)
+      const stillMissingGrowth = stockData.ebitdaGrowth === null || stockData.assetGrowth === null;
+      if (stillMissingGrowth && alphaVantageService.isAvailable() && alphaVantageService.getRemainingCalls() > 5) {
+        try {
+          const avData = await alphaVantageService.getGrowthMetrics(upperTicker);
+          if (stockData.ebitdaGrowth === null && avData.ebitdaGrowth !== null) {
+            stockData.ebitdaGrowth = avData.ebitdaGrowth;
+          }
+          if (stockData.assetGrowth === null && avData.assetGrowth !== null) {
+            stockData.assetGrowth = avData.assetGrowth;
+          }
+        } catch {
+          // Silently ignore Alpha Vantage failures in bulk mode
+        }
+      }
+
+      cacheService.saveStockData(stockData);
+    }
+
+    // Prepare scoring input
+    const scoringInput: ScoringInput = {
+      price: stockData.price,
+      marketCap: stockData.marketCap,
+      high52w: stockData.high52w,
+      low52w: stockData.low52w,
+      freeCashFlow: stockData.fcf || undefined,
+      bookValue: stockData.bookValue || undefined,
+      ebitdaGrowth: stockData.ebitdaGrowth || undefined,
+      assetGrowth: stockData.assetGrowth || undefined,
+      ebitdaMargin: stockData.ebitdaMargin || undefined,
+      roa: stockData.roa || undefined,
+      price6MonthsAgo: stockData.price6MonthsAgo || undefined,
+      paysDividend: stockData.paysDividend || false,
+      dividendYield: stockData.dividendYield || undefined,
+    };
+
+    const scores = scoringService.calculateScores(scoringInput);
+    this.saveScreeningResult(stockData, scores);
+
+    return {
+      ticker: upperTicker,
+      name: stockData.companyName,
+      sector: stockData.sector,
+      industry: stockData.industry || 'Unknown',
+      exchange: 'N/A',
+      price: stockData.price,
+      marketCap: stockData.marketCap,
+      high52w: stockData.high52w,
+      low52w: stockData.low52w,
+      factors: scores,
+      totalScore: scores.total,
+      maxScore: scores.maxTotal,
+      percentage: scores.percentage,
+      classification: scores.classification,
+      dataSource,
+      timestamp: Date.now(),
+    };
+  }
+
+  /**
+   * Get all screened results for an exchange from database
+   */
+  async getExchangeResults(req: Request, res: Response): Promise<void> {
+    try {
+      const { exchange } = req.params;
+      const limit = parseInt(req.query.limit as string) || 100;
+      const minPercentage = parseFloat(req.query.minPercentage as string) || 0;
+
+      // Get recent screening results
+      const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+      const stmt = db.prepare(`
+        SELECT
+          ticker,
+          company_name as name,
+          sector,
+          market_cap as marketCap,
+          total_score as totalScore,
+          percentage,
+          classification,
+          price,
+          screened_at as screenedAt
+        FROM screening_results
+        WHERE screened_at > ? AND percentage >= ?
+        ORDER BY percentage DESC
+        LIMIT ?
+      `);
+
+      const results = stmt.all(oneDayAgo, minPercentage, limit);
+      res.json({
+        exchange: exchange?.toUpperCase() || 'ALL',
+        count: results.length,
+        results,
+      });
+    } catch (error) {
+      console.error('Error getting exchange results:', error);
+      res.status(500).json({ error: 'Failed to get exchange results' });
     }
   }
 }
