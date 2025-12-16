@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
-import { fmpApiService } from '../services/fmp-api.service';
-import { anthropicService } from '../services/anthropic.service';
+import { fmpApiService, GrowthMetrics } from '../services/fmp-api.service';
+import { geminiService } from '../services/gemini.service';
 import { cacheService, CachedStockData } from '../services/cache.service';
 import { scoringService, ScoringInput, YartsevaScores } from '../services/scoring.service';
 import db from '../config/database';
@@ -69,19 +69,31 @@ class ScreenController {
         // Get dividend info
         const dividendInfo = await fmpApiService.getDividendInfo(upperTicker);
 
-        // Try to get growth metrics from Anthropic
-        let assetGrowth: number | undefined;
-        let ebitdaGrowth: number | undefined;
-        try {
-          const growthMetrics = await anthropicService.searchGrowthMetrics(
+        // HYBRID APPROACH: Get growth metrics
+        // 1. Primary: Calculate from FMP historical data (free, fast, accurate)
+        // 2. Fallback: Use Gemini with Google Search grounding if FMP data insufficient
+        let growthMetrics: GrowthMetrics = await fmpApiService.calculateGrowthMetrics(upperTicker);
+
+        // If FMP couldn't calculate both metrics, try Gemini as fallback
+        if ((growthMetrics.ebitdaGrowth === null || growthMetrics.assetGrowth === null)
+            && geminiService.isAvailable()) {
+          console.log(`FMP data incomplete for ${upperTicker}, trying Gemini fallback...`);
+          const geminiMetrics = await geminiService.searchGrowthMetrics(
             upperTicker,
             fmpData.profile.companyName
           );
-          assetGrowth = growthMetrics.assetGrowth;
-          ebitdaGrowth = growthMetrics.ebitdaGrowth;
-        } catch (error) {
-          console.warn(`Could not fetch growth metrics from Anthropic for ${upperTicker}:`, error);
+
+          // Merge: prefer FMP data, fill gaps with Gemini
+          growthMetrics = {
+            ebitdaGrowth: growthMetrics.ebitdaGrowth ?? geminiMetrics.ebitdaGrowth,
+            assetGrowth: growthMetrics.assetGrowth ?? geminiMetrics.assetGrowth,
+            source: growthMetrics.source === 'fmp' ? 'fmp' : geminiMetrics.source,
+          };
         }
+
+        const assetGrowth = growthMetrics.assetGrowth ?? undefined;
+        const ebitdaGrowth = growthMetrics.ebitdaGrowth ?? undefined;
+        console.log(`Growth metrics for ${upperTicker}: EBITDA=${ebitdaGrowth}, Assets=${assetGrowth} (source: ${growthMetrics.source})`);
 
         // Calculate book value from balance sheet
         const bookValue = latestBalance?.totalStockholdersEquity || null;

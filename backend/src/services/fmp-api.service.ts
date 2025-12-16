@@ -79,6 +79,12 @@ export interface CashFlowStatement {
   capitalExpenditure: number;
 }
 
+export interface GrowthMetrics {
+  ebitdaGrowth: number | null;  // 3-year CAGR as percentage
+  assetGrowth: number | null;   // 3-year CAGR as percentage
+  source: 'fmp' | 'gemini' | 'unavailable';
+}
+
 export interface StockData {
   profile: CompanyProfile;
   quote: Quote;
@@ -340,6 +346,85 @@ class FMPApiService {
       return { paysDividend: false, dividendYield: null };
     } catch {
       return { paysDividend: false, dividendYield: null };
+    }
+  }
+
+  /**
+   * Calculate CAGR (Compound Annual Growth Rate)
+   * @param startValue - Value at beginning of period
+   * @param endValue - Value at end of period
+   * @param years - Number of years in period
+   * @returns CAGR as percentage (e.g., 15.5 for 15.5%)
+   */
+  private calculateCAGR(startValue: number, endValue: number, years: number): number | null {
+    if (!startValue || !endValue || startValue <= 0 || years <= 0) {
+      return null;
+    }
+    // Handle negative to positive transition
+    if (startValue < 0 && endValue > 0) {
+      return null; // Can't calculate meaningful CAGR
+    }
+    // Handle both negative (improving losses)
+    if (startValue < 0 && endValue < 0) {
+      // Calculate improvement rate (less negative is better)
+      const ratio = endValue / startValue;
+      if (ratio > 1) return null; // Getting worse
+      return (Math.pow(1 / ratio, 1 / years) - 1) * 100;
+    }
+    // Normal case: both positive
+    const cagr = (Math.pow(endValue / startValue, 1 / years) - 1) * 100;
+    return cagr;
+  }
+
+  /**
+   * Calculate growth metrics from historical FMP data
+   * Uses 3-year CAGR for EBITDA and Total Assets
+   */
+  async calculateGrowthMetrics(ticker: string): Promise<GrowthMetrics> {
+    try {
+      // Fetch historical data (we need at least 4 years for 3-year CAGR)
+      const [incomeStatements, balanceSheets] = await Promise.all([
+        this.getIncomeStatement(ticker, 'annual', 5),
+        this.getBalanceSheet(ticker, 'annual', 5),
+      ]);
+
+      let ebitdaGrowth: number | null = null;
+      let assetGrowth: number | null = null;
+
+      // Calculate EBITDA CAGR (3-year)
+      // Income statements are sorted newest first
+      if (incomeStatements.length >= 4) {
+        const currentEbitda = incomeStatements[0]?.ebitda;
+        const pastEbitda = incomeStatements[3]?.ebitda; // 3 years ago
+        if (currentEbitda && pastEbitda) {
+          ebitdaGrowth = this.calculateCAGR(pastEbitda, currentEbitda, 3);
+        }
+      }
+
+      // Calculate Asset Growth CAGR (3-year)
+      if (balanceSheets.length >= 4) {
+        const currentAssets = balanceSheets[0]?.totalAssets;
+        const pastAssets = balanceSheets[3]?.totalAssets; // 3 years ago
+        if (currentAssets && pastAssets) {
+          assetGrowth = this.calculateCAGR(pastAssets, currentAssets, 3);
+        }
+      }
+
+      // Determine source based on what we found
+      const hasData = ebitdaGrowth !== null || assetGrowth !== null;
+
+      return {
+        ebitdaGrowth,
+        assetGrowth,
+        source: hasData ? 'fmp' : 'unavailable',
+      };
+    } catch (error) {
+      console.warn(`Could not calculate growth metrics for ${ticker}:`, error);
+      return {
+        ebitdaGrowth: null,
+        assetGrowth: null,
+        source: 'unavailable',
+      };
     }
   }
 }
