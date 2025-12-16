@@ -790,7 +790,7 @@ function AppContent() {
   };
 
   return (
-    <div className="terminal-container">
+    <div className="terminal-container terminal-boot">
       <TerminalTopBar activeView={activeView} setActiveView={setActiveView} />
       <MarketTicker />
 
