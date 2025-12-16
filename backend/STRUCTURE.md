@@ -17,10 +17,10 @@ backend/
     │   └── database.ts      # SQLite database setup and schema
     │
     ├── services/
-    │   ├── fmp-api.service.ts       # Financial Modeling Prep API client
-    │   ├── anthropic.service.ts     # Anthropic web search for growth metrics
+    │   ├── fmp-api.service.ts       # Financial Modeling Prep API client + CAGR calculation
+    │   ├── gemini.service.ts        # Gemini 2.0 Flash fallback for growth metrics
     │   ├── cache.service.ts         # Database caching layer
-    │   └── scoring.service.ts       # Yartseva scoring implementation
+    │   └── scoring.service.ts       # Yartseva scoring implementation (110 pts)
     │
     ├── controllers/
     │   └── screen.controller.ts     # Screening logic and endpoints
@@ -46,12 +46,13 @@ backend/
 - Fetches: profiles, quotes, key metrics, ratios, financials
 - Returns structured TypeScript interfaces
 - Parallel data fetching for efficiency
+- **calculateGrowthMetrics()**: Calculates 3-year CAGR from historical data
 
-### 3. Anthropic Service (`src/services/anthropic.service.ts`)
-- Rate-limited (50/min) web search via Anthropic API
-- Searches for complex growth metrics (asset growth, EBITDA growth)
-- Uses Claude Sonnet 4.5 with web_search tool
-- Returns structured JSON responses
+### 3. Gemini Service (`src/services/gemini.service.ts`)
+- Rate-limited (60/min) fallback using Gemini 2.0 Flash
+- Google Search grounding for growth metrics when FMP data incomplete
+- Only triggered when FMP historical data is unavailable
+- 1,500 free grounded searches/day
 
 ### 4. Cache Service (`src/services/cache.service.ts`)
 - Check/save stock data to SQLite cache
@@ -60,23 +61,21 @@ backend/
 - Clear expired/all entries
 
 ### 5. Scoring Service (`src/services/scoring.service.ts`)
-- Implements Yartseva 9-factor scoring system:
-  1. Valuation (P/E, P/B)
-  2. Growth (asset, EBITDA)
-  3. Profitability (ROA, ROE, margins)
-  4. Quality (balance sheet)
-  5. Price Momentum (52-week position)
-  6. Earnings Momentum (trends)
-  7. Small Cap Premium
-  8. Low Volatility
-  9. Financial Strength (FCF, assets)
-- Each factor: 0-5 points
-- Total: 0-45 points
-- Classification: multibagger (35+), potential (25-34), neutral (15-24), poor (0-14)
+- Implements Yartseva 9-factor scoring system (110 points max):
+  1. FCF Yield (25 pts) - MOST IMPORTANT
+  2. Size (15 pts) - Market cap <$350M optimal
+  3. Book-to-Market (15 pts) - Value factor
+  4. Investment Pattern (15 pts) - EBITDA growth > Asset growth
+  5. EBITDA Margin (10 pts) - Profitability
+  6. ROA (10 pts) - Asset efficiency
+  7. Price Range (10 pts) - CONTRARIAN: near 52-week lows
+  8. Momentum (5 pts) - CONTRARIAN: negative is good
+  9. Dividend (5 pts) - 78% of multibaggers paid dividends
+- Classification: STRONG BUY (>=70%), MODERATE BUY (>=55%), WEAK BUY (>=40%), AVOID (<40%)
 
 ### 6. Screen Controller (`src/controllers/screen.controller.ts`)
 - Main screening endpoint logic
-- Combines FMP + Anthropic data
+- **Hybrid approach**: FMP data (primary) + Gemini (fallback)
 - Calculates Yartseva scores
 - Saves results to database
 - Returns complete screening result
@@ -126,12 +125,12 @@ CREATE TABLE screening_results (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ticker TEXT NOT NULL,
   screened_at INTEGER NOT NULL,
-  
+
   -- Company info
   company_name TEXT,
   sector TEXT,
   market_cap REAL,
-  
+
   -- Raw metrics
   price REAL,
   high_52w REAL,
@@ -147,23 +146,23 @@ CREATE TABLE screening_results (
   dividend_yield REAL,
   pe_ratio REAL,
   pb_ratio REAL,
-  
-  -- Yartseva scores (0-5 each)
-  score_valuation INTEGER,
-  score_growth INTEGER,
-  score_profitability INTEGER,
-  score_quality INTEGER,
-  score_price_momentum INTEGER,
-  score_earnings_momentum INTEGER,
-  score_small_cap INTEGER,
-  score_low_vol INTEGER,
-  score_financial_strength INTEGER,
-  
-  -- Total score (0-45)
+
+  -- Yartseva scores
+  score_fcf_yield INTEGER,
+  score_size INTEGER,
+  score_book_to_market INTEGER,
+  score_investment_pattern INTEGER,
+  score_ebitda_margin INTEGER,
+  score_roa INTEGER,
+  score_price_range INTEGER,
+  score_momentum INTEGER,
+  score_dividend INTEGER,
+
+  -- Total score (0-110)
   total_score INTEGER NOT NULL,
-  
+
   -- Classification
-  classification TEXT CHECK(classification IN ('multibagger', 'potential', 'neutral', 'poor')) NOT NULL
+  classification TEXT CHECK(classification IN ('STRONG BUY', 'MODERATE BUY', 'WEAK BUY', 'AVOID')) NOT NULL
 );
 ```
 
@@ -177,7 +176,7 @@ Returns complete screening result with metrics and scores.
 
 ### Get Top Scorers
 ```
-GET /api/screen/top?limit=50&minScore=25
+GET /api/screen/top?limit=50&minPercentage=55
 ```
 Returns list of highest-scoring stocks.
 
@@ -209,25 +208,25 @@ Removes all cache entries.
 
 - **Runtime**: Node.js 18+
 - **Language**: TypeScript
-- **Framework**: Express
+- **Framework**: Express 5
 - **Database**: SQLite (better-sqlite3)
 - **Rate Limiting**: Bottleneck
 - **External APIs**:
-  - Financial Modeling Prep (stock data)
-  - Anthropic (web search for growth metrics)
+  - Financial Modeling Prep (stock data + historical CAGR)
+  - Gemini 2.0 Flash (fallback for growth metrics)
 
 ## Rate Limits
 
-- FMP API: 250 requests/minute (240ms between requests)
-- Anthropic API: 50 requests/minute (1200ms between requests)
+- FMP API: 250 requests/day free tier
+- Gemini API: 1,500 grounded searches/day free tier
 
 ## Environment Variables
 
 ```env
-PORT=3000
+PORT=3001
 NODE_ENV=development
 FMP_API_KEY=your_key_here
-ANTHROPIC_API_KEY=your_key_here
+GEMINI_API_KEY=your_key_here  # Optional - for fallback
 ```
 
 ## Getting Started

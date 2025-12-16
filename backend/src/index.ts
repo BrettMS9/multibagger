@@ -80,8 +80,8 @@ app.listen(PORT, () => {
   console.log('  - DEL  /api/cache/all');
   console.log('');
   console.log('API Keys configured:');
-  console.log(`  - FMP_API_KEY: ${process.env.FMP_API_KEY ? 'configured' : 'MISSING'}`);
-  console.log(`  - ANTHROPIC_API_KEY: ${process.env.ANTHROPIC_API_KEY ? 'configured' : 'MISSING'}`);
+  console.log(`  - FMP_API_KEY: ${process.env.FMP_API_KEY ? 'configured' : 'MISSING (required)'}`);
+  console.log(`  - GEMINI_API_KEY: ${process.env.GEMINI_API_KEY ? 'configured' : 'not set (optional fallback)'}`);
 });
 
 export default app;

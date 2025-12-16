@@ -1,44 +1,46 @@
 # Multibagger Stock Screener - Backend API
 
-Backend API for screening stocks using the Yartseva (2025) methodology from "The Alchemy of Multibagger Stocks."
+Backend API for screening stocks using the Yartseva (2025) methodology from "The Alchemy of Multibagger Stocks" - CAFE Working Paper No.33.
 
 ## Overview
 
-This API implements a comprehensive stock screening system based on 9 fundamental factors:
+This API implements the empirically-validated Yartseva 9-Factor Scoring System, based on analysis of 464 stocks achieving 10x+ returns from 2009-2024.
 
-1. **Valuation** - P/E, P/B ratios
-2. **Growth** - Asset and EBITDA growth rates
-3. **Profitability** - ROA, ROE, EBITDA margins
-4. **Quality** - Balance sheet strength
-5. **Price Momentum** - 52-week position
-6. **Earnings Momentum** - Profitability trends
-7. **Small Cap Premium** - Market cap scoring
-8. **Low Volatility** - Beta-based risk
-9. **Financial Strength** - FCF and asset quality
+### Scoring System (110 points max)
 
-Each factor scores 0-5 points, with a maximum total score of 45 points.
+| Factor | Max Points | Key Insight |
+|--------|------------|-------------|
+| **FCF Yield** | 25 | MOST IMPORTANT - highest predictive power |
+| **Size** | 15 | Market cap < $350M optimal |
+| **Book-to-Market** | 15 | Value factor (B/M > 1.0 ideal) |
+| **Investment Pattern** | 15 | UNIQUE FINDING - EBITDA growth > Asset growth |
+| **EBITDA Margin** | 10 | Operating profitability |
+| **ROA** | 10 | Asset efficiency |
+| **Price Range** | 10 | CONTRARIAN - buy near 52-week lows |
+| **Momentum** | 5 | CONTRARIAN - negative momentum preferred |
+| **Dividend** | 5 | 78% of multibaggers paid dividends |
 
 ### Classification
 
-- **Multibagger (35-45)**: Strong multibagger potential
-- **Potential (25-34)**: Moderate potential
-- **Neutral (15-24)**: Average stock
-- **Poor (0-14)**: Weak fundamentals
+- **STRONG BUY (≥70%)**: Strong multibagger potential
+- **MODERATE BUY (≥55%)**: Moderate potential
+- **WEAK BUY (≥40%)**: Limited potential
+- **AVOID (<40%)**: Weak fundamentals
 
 ## Features
 
-- SQLite database with automatic caching
+- SQLite database with automatic 24-hour caching
 - Rate-limited API calls to Financial Modeling Prep
-- Web search integration via Anthropic for growth metrics
+- Hybrid growth metrics: FMP historical data (primary) + Gemini search (fallback)
 - Historical screening results tracking
-- Comprehensive scoring system
+- Comprehensive 9-factor scoring system
 - RESTful API endpoints
 
 ## Prerequisites
 
 - Node.js 18+ and npm
-- Financial Modeling Prep API key (free tier available)
-- Anthropic API key
+- Financial Modeling Prep API key (free tier: 250 requests/day)
+- Gemini API key (optional, for fallback - free tier: 1,500 searches/day)
 
 ## Installation
 
@@ -58,16 +60,16 @@ nano .env
 Edit `.env` file:
 
 ```env
-PORT=3000
+PORT=3001
 NODE_ENV=development
 FMP_API_KEY=your_fmp_api_key_here
-ANTHROPIC_API_KEY=your_anthropic_api_key_here
+GEMINI_API_KEY=your_gemini_api_key_here  # Optional
 ```
 
 ### Get API Keys
 
-- **FMP API Key**: https://financialmodelingprep.com/developer/docs/
-- **Anthropic API Key**: https://console.anthropic.com/
+- **FMP API Key** (required): https://financialmodelingprep.com/developer/docs/
+- **Gemini API Key** (optional): https://aistudio.google.com/apikey
 
 ## Usage
 
@@ -94,42 +96,30 @@ GET /api/screen/ticker/:ticker
 
 Example:
 ```bash
-curl http://localhost:3000/api/screen/ticker/AAPL
+curl http://localhost:3001/api/screen/ticker/AAPL
 ```
 
 Response:
 ```json
 {
   "ticker": "AAPL",
-  "companyName": "Apple Inc.",
+  "name": "Apple Inc.",
   "sector": "Technology",
-  "marketCap": 2900000000000,
+  "industry": "Consumer Electronics",
   "price": 185.50,
-  "metrics": {
-    "peRatio": 28.5,
-    "pbRatio": 42.3,
-    "dividendYield": 0.5,
-    "roa": 27.8,
-    "ebitdaMargin": 33.2,
-    "assetGrowth": 8.5,
-    "ebitdaGrowth": 12.3,
-    "fcf": 99000000000,
-    "high52w": 199.62,
-    "low52w": 164.08
+  "marketCap": 2900000000000,
+  "high52w": 199.62,
+  "low52w": 164.08,
+  "factors": {
+    "fcfYield": { "score": 8, "maxScore": 25, "value": "3.4%", "rationale": "..." },
+    "size": { "score": 0, "maxScore": 15, "value": "$2.90T", "rationale": "..." },
+    "bookToMarket": { "score": 4, "maxScore": 15, "value": "0.02", "rationale": "..." },
+    ...
   },
-  "scores": {
-    "valuation": 2,
-    "growth": 3,
-    "profitability": 5,
-    "quality": 4,
-    "priceMomentum": 3,
-    "earningsMomentum": 4,
-    "smallCap": 0,
-    "lowVolatility": 3,
-    "financialStrength": 5,
-    "total": 29,
-    "classification": "potential"
-  },
+  "totalScore": 42,
+  "maxScore": 110,
+  "percentage": 38.2,
+  "classification": "AVOID",
   "dataSource": "api",
   "timestamp": 1702850400000
 }
@@ -138,12 +128,12 @@ Response:
 ### Get Top Scoring Stocks
 
 ```bash
-GET /api/screen/top?limit=50&minScore=25
+GET /api/screen/top?limit=50&minPercentage=55
 ```
 
 Parameters:
 - `limit`: Number of results (default: 50)
-- `minScore`: Minimum total score (default: 25)
+- `minPercentage`: Minimum score percentage (default: 40)
 
 ### Get Historical Results for a Ticker
 
@@ -164,35 +154,19 @@ DELETE /api/cache/expired
 DELETE /api/cache/all
 ```
 
-## Database Schema
+## Growth Metrics: Hybrid Approach
 
-### stock_cache
-Cached stock data (refreshed every 24 hours):
-- ticker, company_name, sector, industry
-- market_cap, price, 52-week high/low
-- fcf, book_value, total_assets
-- ebitda, ebitda_margin, roa
-- asset_growth, ebitda_growth
-- dividend_yield, pe_ratio, pb_ratio
+The system uses a cost-optimized hybrid approach for calculating EBITDA and Asset growth rates:
 
-### screening_results
-Historical screening results with scores:
-- All stock metrics
-- 9 individual scores (0-5 each)
-- total_score (0-45)
-- classification
+1. **Primary (FMP Historical Data)**: Calculates 3-year CAGR from income statements and balance sheets
+   - FREE: No additional API costs
+   - FAST: Data already fetched in screening flow
+   - ACCURATE: Direct from SEC filings
 
-### Additional Tables
-- bulk_screening_jobs: Track bulk screening progress
-- historical_prices: For backtesting
-- historical_fundamentals: For backtesting
-
-## Rate Limits
-
-- **FMP API**: 250 requests/minute
-- **Anthropic API**: 50 requests/minute
-
-The system automatically handles rate limiting using Bottleneck.
+2. **Fallback (Gemini 2.0 Flash)**: Uses Google Search grounding when FMP data is incomplete
+   - Only triggered when FMP historical data insufficient
+   - 1,500 free searches/day, then $0.035/search
+   - Gracefully degrades if GEMINI_API_KEY not configured
 
 ## Architecture
 
@@ -201,10 +175,10 @@ src/
 ├── config/
 │   └── database.ts          # SQLite setup and schema
 ├── services/
-│   ├── fmp-api.service.ts   # Financial Modeling Prep API
-│   ├── anthropic.service.ts # Anthropic web search
+│   ├── fmp-api.service.ts   # Financial Modeling Prep API + CAGR calculation
+│   ├── gemini.service.ts    # Gemini fallback for growth metrics
 │   ├── cache.service.ts     # Database caching
-│   └── scoring.service.ts   # Yartseva scoring logic
+│   └── scoring.service.ts   # Yartseva 9-factor scoring logic
 ├── controllers/
 │   └── screen.controller.ts # Screening endpoints
 ├── routes/
@@ -213,57 +187,20 @@ src/
 └── index.ts                 # Express server
 ```
 
-## Development
+## Rate Limits
 
-### Project Structure
+- **FMP API**: 250 requests/day (free tier)
+- **Gemini API**: 1,500 grounded searches/day (free tier)
 
-- TypeScript for type safety
-- Express for API server
-- better-sqlite3 for database
-- Bottleneck for rate limiting
-- Zod for validation
-
-### Adding New Metrics
-
-1. Add to `ScoringInput` interface in `scoring.service.ts`
-2. Implement scoring function
-3. Update `calculateScores()` method
-4. Add to database schema if needed
-
-## Troubleshooting
-
-### API Key Issues
-
-If you see "MISSING" for API keys:
-```bash
-# Verify .env file exists
-cat .env
-
-# Restart the server
-npm run dev
-```
-
-### Database Issues
-
-The database is created automatically in `data/multibaggers.db`. To reset:
-```bash
-rm -rf data/
-npm run dev
-```
-
-### Rate Limit Errors
-
-The system automatically throttles requests. If you hit limits:
-- Wait a few minutes
-- Check your API key tier limits
-- Consider upgrading API plans
+The system automatically handles rate limiting using Bottleneck.
 
 ## Performance
 
 - First request: ~2-3 seconds (fetches from APIs)
 - Cached request: ~50-100ms
 - Cache duration: 24 hours
-- Concurrent requests: Handled via rate limiter
+- Growth metrics from FMP: ~0ms additional (data already fetched)
+- Growth metrics from Gemini fallback: ~1-2 seconds
 
 ## License
 
@@ -271,4 +208,4 @@ MIT
 
 ## References
 
-Yartseva, A. (2025). "The Alchemy of Multibagger Stocks." CAFE Working Paper 33.
+Yartseva, A. (2025). "The Alchemy of Multibagger Stocks." CAFE Working Paper No.33.
