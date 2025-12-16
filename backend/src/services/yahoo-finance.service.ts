@@ -26,6 +26,13 @@ export interface YahooFinancials {
   freeCashFlow: number | null;
 }
 
+export interface YahooRealTimeQuote {
+  price: number;
+  high52w: number;
+  low52w: number;
+  marketCap: number | null;
+}
+
 class YahooFinanceService {
   private baseUrl = 'https://query1.finance.yahoo.com';
 
@@ -287,6 +294,54 @@ class YahooFinanceService {
         freeCashFlow: null,
       };
     }
+  }
+
+  /**
+   * Get real-time quote data (price, 52-week high/low) from Yahoo Finance chart API
+   * This uses the chart endpoint which provides real-time data without authentication
+   */
+  async getRealTimeQuote(ticker: string): Promise<YahooRealTimeQuote | null> {
+    return yahooLimiter.schedule(async () => {
+      try {
+        const url = `${this.baseUrl}/v8/finance/chart/${ticker}?range=1d&interval=1d`;
+
+        const response = await fetch(url, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          },
+        });
+
+        if (!response.ok) {
+          console.warn(`Yahoo Finance chart API returned ${response.status} for ${ticker}`);
+          return null;
+        }
+
+        const data = await response.json();
+        const result = data?.chart?.result?.[0];
+
+        if (!result || !result.meta) {
+          return null;
+        }
+
+        const meta = result.meta;
+
+        // Get real-time price from meta
+        const price = meta.regularMarketPrice;
+        if (!price) {
+          return null;
+        }
+
+        return {
+          price,
+          high52w: meta.fiftyTwoWeekHigh || price * 1.1,
+          low52w: meta.fiftyTwoWeekLow || price * 0.9,
+          marketCap: meta.marketCap || null,
+        };
+      } catch (error) {
+        console.error(`Error fetching real-time quote for ${ticker}:`, error);
+        return null;
+      }
+    });
   }
 
   /**

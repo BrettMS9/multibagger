@@ -153,6 +153,22 @@ class ScreenController {
         cacheService.saveStockData(stockData);
       }
 
+      // Always fetch real-time price from Yahoo Finance (more accurate than Gemini/cached)
+      try {
+        const realTimeQuote = await yahooFinanceService.getRealTimeQuote(upperTicker);
+        if (realTimeQuote) {
+          const oldPrice = stockData.price;
+          stockData.price = realTimeQuote.price;
+          stockData.high52w = realTimeQuote.high52w;
+          stockData.low52w = realTimeQuote.low52w;
+          if (oldPrice !== realTimeQuote.price) {
+            console.log(`Updated ${upperTicker} price from Yahoo: $${oldPrice.toFixed(2)} → $${realTimeQuote.price.toFixed(2)}`);
+          }
+        }
+      } catch (rtError) {
+        console.warn(`Could not get real-time quote for ${upperTicker}:`, rtError);
+      }
+
       // Prepare scoring input
       const scoringInput: ScoringInput = {
         price: stockData.price,
@@ -565,6 +581,18 @@ class ScreenController {
       }
 
       cacheService.saveStockData(stockData);
+    }
+
+    // Fetch real-time price from Yahoo Finance (more accurate than Gemini/cached)
+    try {
+      const realTimeQuote = await yahooFinanceService.getRealTimeQuote(upperTicker);
+      if (realTimeQuote) {
+        stockData.price = realTimeQuote.price;
+        stockData.high52w = realTimeQuote.high52w;
+        stockData.low52w = realTimeQuote.low52w;
+      }
+    } catch {
+      // Continue with cached/Gemini price if real-time fails
     }
 
     // Prepare scoring input

@@ -6,18 +6,6 @@ import { SECTOR_LABELS } from './types';
 
 const queryClient = new QueryClient();
 
-// Market ticker data (simulated)
-const TICKER_DATA = [
-  { symbol: 'SPY', price: '478.23', change: '+0.82%', positive: true },
-  { symbol: 'QQQ', price: '412.56', change: '+1.24%', positive: true },
-  { symbol: 'IWM', price: '198.34', change: '-0.31%', positive: false },
-  { symbol: 'DIA', price: '376.89', change: '+0.45%', positive: true },
-  { symbol: 'VIX', price: '14.23', change: '-2.15%', positive: false },
-  { symbol: 'TNX', price: '4.21', change: '+0.08%', positive: true },
-  { symbol: 'GLD', price: '185.67', change: '+0.34%', positive: true },
-  { symbol: 'USO', price: '72.45', change: '-1.12%', positive: false },
-];
-
 const SECTORS: { id: Sector; name: string; icon: string }[] = [
   { id: 'all', name: 'All Sectors', icon: '◉' },
   { id: 'technology', name: 'Technology', icon: '⚡' },
@@ -88,41 +76,20 @@ const TerminalTopBar: React.FC<{
   );
 };
 
-// Market Ticker
-const MarketTicker: React.FC = () => (
-  <div className="market-ticker">
-    <div className="ticker-track">
-      {[...TICKER_DATA, ...TICKER_DATA].map((item, i) => (
-        <div key={i} className="ticker-item">
-          <span className="ticker-symbol">{item.symbol}</span>
-          <span className="ticker-price">{item.price}</span>
-          <span className={`ticker-change ${item.positive ? 'positive' : 'negative'}`}>
-            {item.change}
-          </span>
-        </div>
-      ))}
-    </div>
-  </div>
-);
-
-// Left Panel - Command & Sectors
+// Left Panel - Command Input (for single ticker analysis)
 const LeftPanel: React.FC<{
   searchTicker: string;
   setSearchTicker: (ticker: string) => void;
   onSearch: () => void;
-  selectedSector: Sector;
-  setSelectedSector: (sector: Sector) => void;
-}> = ({ searchTicker, setSearchTicker, onSearch, selectedSector, setSelectedSector }) => {
+}> = ({ searchTicker, setSearchTicker, onSearch }) => {
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') onSearch();
   };
 
-  const quickTickers = ['AAPL', 'NVDA', 'TSLA', 'MSFT', 'AMD'];
-
   return (
     <div className="terminal-panel left-panel">
       <div className="panel-header">
-        <span className="panel-title">Command</span>
+        <span className="panel-title">Ticker Search</span>
       </div>
 
       <div className="command-input-container">
@@ -137,24 +104,42 @@ const LeftPanel: React.FC<{
             onKeyDown={handleKeyDown}
           />
         </div>
+        <button
+          className="quick-action-btn"
+          style={{ marginTop: '8px', width: '100%' }}
+          onClick={onSearch}
+        >
+          Analyze
+        </button>
       </div>
 
-      <div className="quick-actions">
-        {quickTickers.map((ticker) => (
-          <button
-            key={ticker}
-            className="quick-action-btn"
-            onClick={() => {
-              setSearchTicker(ticker);
-              setTimeout(onSearch, 0);
-            }}
-          >
-            {ticker}
-          </button>
-        ))}
+      <div className="methodology-note" style={{ margin: 'var(--space-md)' }}>
+        <div className="methodology-title">How to Use</div>
+        <div className="methodology-text">
+          Enter any stock ticker symbol (e.g., AAPL, TSLA, HPK) and press Enter or click Analyze to
+          evaluate its multibagger potential using the Yartseva Quality Factor Model.
+        </div>
       </div>
 
-      <div className="panel-header" style={{ marginTop: 0 }}>
+      <div className="methodology-note" style={{ margin: 'var(--space-md)', marginTop: 0 }}>
+        <div className="methodology-title">Data Sources</div>
+        <div className="methodology-text">
+          Financial data sourced from Yahoo Finance, SEC EDGAR filings, and Financial Modeling Prep API.
+          Growth metrics calculated from official 10-K filings for maximum accuracy.
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Screener Left Panel - with Sector Selection
+const ScreenerLeftPanel: React.FC<{
+  selectedSector: Sector;
+  setSelectedSector: (sector: Sector) => void;
+}> = ({ selectedSector, setSelectedSector }) => {
+  return (
+    <div className="terminal-panel left-panel">
+      <div className="panel-header">
         <span className="panel-title">Sectors</span>
         <span className="panel-subtitle">Russell 2000</span>
       </div>
@@ -175,6 +160,14 @@ const LeftPanel: React.FC<{
             </span>
           </div>
         ))}
+      </div>
+
+      <div className="methodology-note" style={{ margin: 'var(--space-md)' }}>
+        <div className="methodology-title">Bulk Screening</div>
+        <div className="methodology-text">
+          Select a sector and click "Run Screen" to analyze the top candidates from the Russell 2000
+          universe based on Yartseva factor scores.
+        </div>
       </div>
     </div>
   );
@@ -615,13 +608,16 @@ const MethodologyView: React.FC = () => {
   const sections = [
     {
       id: 'scoring',
-      title: 'Scoring System',
+      title: 'What is the Yartseva Scoring System?',
       content: (
         <div>
           <p style={{ marginBottom: '12px' }}>
-            The Yartseva Quality Factor Model is based on empirical research analyzing 464 stocks 
-            that achieved 10x+ returns between 2009-2024. The model identifies 9 key factors 
-            weighted by their statistical significance.
+            The scoring system is based on <strong style={{ color: 'var(--terminal-green)' }}>Yartseva (2025) "The Alchemy of Multibagger Stocks"</strong>,
+            a peer-reviewed study analyzing 464 stocks that achieved 10x+ returns between 2009-2024.
+          </p>
+          <p style={{ marginBottom: '12px' }}>
+            The research identified 9 key factors that predict multibagger potential, weighted by their
+            statistical significance. The maximum score is 110 points.
           </p>
           <table className="screener-table" style={{ fontSize: '10px' }}>
             <thead>
@@ -632,14 +628,14 @@ const MethodologyView: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              <tr><td style={{ color: 'var(--terminal-green)' }}>FCF Yield</td><td>25</td><td>Most predictive factor</td></tr>
+              <tr><td style={{ color: 'var(--terminal-green)' }}>FCF Yield</td><td>25</td><td>MOST predictive factor</td></tr>
               <tr><td>Size (Market Cap)</td><td>15</td><td>Small caps outperform</td></tr>
               <tr><td>Book-to-Market</td><td>15</td><td>Value effect</td></tr>
-              <tr><td style={{ color: 'var(--terminal-yellow)' }}>Investment Pattern</td><td>15</td><td>Unique finding</td></tr>
+              <tr><td style={{ color: 'var(--terminal-yellow)' }}>Investment Pattern</td><td>15</td><td>UNIQUE finding</td></tr>
               <tr><td>EBITDA Margin</td><td>10</td><td>Profitability</td></tr>
               <tr><td>ROA</td><td>10</td><td>Asset efficiency</td></tr>
-              <tr><td style={{ color: '#a855f7' }}>Price Range</td><td>10</td><td>Contrarian - buy low</td></tr>
-              <tr><td style={{ color: '#a855f7' }}>Momentum</td><td>5</td><td>Contrarian - negative is good</td></tr>
+              <tr><td style={{ color: '#a855f7' }}>Price Range</td><td>10</td><td>CONTRARIAN - buy low</td></tr>
+              <tr><td style={{ color: '#a855f7' }}>Momentum</td><td>5</td><td>CONTRARIAN - negative is good</td></tr>
               <tr><td>Dividend</td><td>5</td><td>78% paid dividends</td></tr>
             </tbody>
           </table>
@@ -648,7 +644,7 @@ const MethodologyView: React.FC = () => {
     },
     {
       id: 'classification',
-      title: 'Classifications',
+      title: 'What do the classifications mean?',
       content: (
         <div>
           <div style={{ display: 'grid', gap: '8px' }}>
@@ -673,26 +669,175 @@ const MethodologyView: React.FC = () => {
       ),
     },
     {
-      id: 'contrarian',
-      title: 'Contrarian Factors',
+      id: 'sectors',
+      title: 'Which sectors produce the most multibaggers?',
       content: (
         <div>
-          <p style={{ marginBottom: '12px' }}>
+          <p style={{ marginBottom: '12px', color: 'var(--text-secondary)' }}>Based on the Yartseva research (464 multibaggers, 2009-2024):</p>
+          <div style={{ display: 'grid', gap: '6px' }}>
+            {[
+              { sector: 'Consumer Discretionary', pct: 21.6, highlight: true },
+              { sector: 'Technology', pct: 18.5, highlight: true },
+              { sector: 'Healthcare', pct: 15.1, highlight: true },
+              { sector: 'Industrials', pct: 14.0, highlight: false },
+              { sector: 'Financials', pct: 10.3, highlight: false },
+              { sector: 'Energy', pct: 7.1, highlight: false },
+              { sector: 'Materials', pct: 5.8, highlight: false },
+            ].map((item) => (
+              <div key={item.sector} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{
+                  width: '140px',
+                  fontSize: '10px',
+                  color: item.highlight ? 'var(--text-primary)' : 'var(--text-secondary)'
+                }}>{item.sector}</span>
+                <div style={{ flex: 1, height: '6px', background: 'var(--bg-tertiary)', borderRadius: '3px' }}>
+                  <div style={{
+                    width: `${(item.pct / 25) * 100}%`,
+                    height: '100%',
+                    borderRadius: '3px',
+                    background: item.highlight ? 'var(--terminal-green)' : 'var(--text-dim)'
+                  }} />
+                </div>
+                <span style={{
+                  width: '40px',
+                  textAlign: 'right',
+                  fontSize: '10px',
+                  color: item.highlight ? 'var(--terminal-green)' : 'var(--text-secondary)'
+                }}>{item.pct}%</span>
+              </div>
+            ))}
+          </div>
+          <div style={{ marginTop: '12px', padding: '8px', background: 'rgba(0, 255, 136, 0.1)', border: '1px solid rgba(0, 255, 136, 0.3)', fontSize: '10px' }}>
+            <strong style={{ color: 'var(--terminal-green)' }}>Tip:</strong> Focus on Consumer Discretionary, Technology, and Healthcare for the highest probability of finding multibaggers.
+          </div>
+        </div>
+      ),
+    },
+    {
+      id: 'marketcap',
+      title: 'What is the optimal market cap size?',
+      content: (
+        <div>
+          <p style={{ marginBottom: '12px', color: 'var(--text-secondary)' }}>Smaller companies have significantly higher multibagger potential:</p>
+          <div style={{ display: 'grid', gap: '6px' }}>
+            {[
+              { label: 'Micro-cap (<$350M)', score: '15/15', desc: 'Highest potential' },
+              { label: 'Small-cap ($350M-$500M)', score: '12/15', desc: 'Excellent potential' },
+              { label: 'Small-mid ($500M-$1B)', score: '8/15', desc: 'Good potential' },
+              { label: 'Mid-cap ($1B-$2B)', score: '4/15', desc: 'Moderate potential' },
+              { label: 'Large-cap (>$2B)', score: '0/15', desc: 'Limited potential' },
+            ].map((item) => (
+              <div key={item.label} style={{ padding: '8px', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-primary)' }}>{item.label}</div>
+                  <div style={{ fontSize: '9px', color: 'var(--text-secondary)' }}>{item.desc}</div>
+                </div>
+                <span style={{ fontFamily: 'monospace', color: 'var(--terminal-green)' }}>{item.score}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{ marginTop: '12px', padding: '8px', background: 'rgba(0, 200, 255, 0.1)', border: '1px solid rgba(0, 200, 255, 0.3)', fontSize: '10px' }}>
+            <strong style={{ color: 'var(--terminal-cyan)' }}>Why Russell 2000?</strong> This index focuses on small-cap stocks, which aligns perfectly with the Yartseva methodology's finding that smaller companies have higher multibagger potential.
+          </div>
+        </div>
+      ),
+    },
+    {
+      id: 'investment',
+      title: 'What is the "Investment Pattern" factor?',
+      content: (
+        <div>
+          <p style={{ marginBottom: '12px', color: 'var(--text-secondary)' }}>
+            This is a <strong style={{ color: 'var(--terminal-yellow)' }}>unique finding</strong> from the Yartseva research. It measures whether a company's
+            investment strategy is sustainable:
+          </p>
+          <div style={{ padding: '12px', background: 'rgba(255, 215, 0, 0.1)', border: '1px solid rgba(255, 215, 0, 0.3)', marginBottom: '12px' }}>
+            <p style={{ fontWeight: 'bold', color: 'var(--terminal-yellow)', marginBottom: '8px' }}>EBITDA Growth &gt; Asset Growth = Sustainable Investment</p>
+            <p style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>
+              When earnings grow faster than assets, it means the company is deploying capital efficiently
+              and generating increasing returns on its investments.
+            </p>
+          </div>
+          <p style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>
+            <strong>Scoring:</strong> Companies where EBITDA growth exceeds asset growth by any margin receive the full 15 points.
+            This pattern was present in the majority of successful multibaggers.
+          </p>
+        </div>
+      ),
+    },
+    {
+      id: 'contrarian',
+      title: 'Why are the entry point factors "contrarian"?',
+      content: (
+        <div>
+          <p style={{ marginBottom: '12px', color: 'var(--text-secondary)' }}>
             Two factors reward contrarian behavior — buying when others are selling:
           </p>
           <div style={{ padding: '12px', background: 'rgba(138, 43, 226, 0.1)', border: '1px solid rgba(138, 43, 226, 0.3)', marginBottom: '8px' }}>
             <strong style={{ color: '#a855f7' }}>Price Range (Entry Point)</strong>
             <p style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-              Stocks trading near 52-week lows scored highest. Buying near lows significantly 
-              increases multibagger probability.
+              Stocks trading near their 52-week lows scored highest. This is counterintuitive — most investors avoid "falling knives,"
+              but the data shows buying near lows significantly increases multibagger probability.
             </p>
           </div>
-          <div style={{ padding: '12px', background: 'rgba(138, 43, 226, 0.1)', border: '1px solid rgba(138, 43, 226, 0.3)' }}>
+          <div style={{ padding: '12px', background: 'rgba(138, 43, 226, 0.1)', border: '1px solid rgba(138, 43, 226, 0.3)', marginBottom: '8px' }}>
             <strong style={{ color: '#a855f7' }}>6-Month Momentum</strong>
             <p style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-              Negative momentum was a positive signal. Stocks that had fallen before becoming 
-              multibaggers outperformed those with positive momentum.
+              Negative momentum (price decline over 6 months) was actually a positive signal. Stocks that had fallen
+              before becoming multibaggers outperformed those with positive momentum.
             </p>
+          </div>
+          <div style={{ padding: '8px', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', fontSize: '10px', color: 'var(--text-secondary)' }}>
+            <strong>Key Insight:</strong> The best time to buy future multibaggers is when they're unloved and underperforming —
+            the opposite of what most momentum-based strategies suggest.
+          </div>
+        </div>
+      ),
+    },
+    {
+      id: 'data',
+      title: 'Where does the data come from?',
+      content: (
+        <div>
+          <p style={{ marginBottom: '12px', color: 'var(--text-secondary)' }}>We use multiple data sources for comprehensive coverage:</p>
+          <div style={{ display: 'grid', gap: '6px' }}>
+            {[
+              { name: 'Yahoo Finance', desc: 'Real-time prices, market cap, 52-week ranges' },
+              { name: 'Financial Modeling Prep', desc: 'Fundamental data, financial statements' },
+              { name: 'SEC EDGAR', desc: 'Official filings for US companies (EBITDA, Assets, Revenue)' },
+              { name: 'Gemini AI', desc: 'Intelligent data extraction and analysis' },
+            ].map((source) => (
+              <div key={source.name} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', padding: '8px', background: 'var(--bg-secondary)' }}>
+                <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--terminal-green)', marginTop: '5px' }} />
+                <div>
+                  <p style={{ fontSize: '11px', color: 'var(--text-primary)', fontWeight: '500' }}>{source.name}</p>
+                  <p style={{ fontSize: '9px', color: 'var(--text-secondary)' }}>{source.desc}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ),
+    },
+    {
+      id: 'updates',
+      title: 'How often is data updated?',
+      content: (
+        <div>
+          <p style={{ marginBottom: '12px', color: 'var(--text-secondary)' }}>Data freshness varies by type:</p>
+          <div style={{ display: 'grid', gap: '6px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px', background: 'var(--bg-secondary)' }}>
+              <span style={{ color: 'var(--text-primary)', fontSize: '11px' }}>Price data</span>
+              <span style={{ color: 'var(--terminal-green)', fontFamily: 'monospace', fontSize: '11px' }}>Real-time</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px', background: 'var(--bg-secondary)' }}>
+              <span style={{ color: 'var(--text-primary)', fontSize: '11px' }}>Fundamental data</span>
+              <span style={{ color: 'var(--terminal-green)', fontFamily: 'monospace', fontSize: '11px' }}>Daily</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px', background: 'var(--bg-secondary)' }}>
+              <span style={{ color: 'var(--text-primary)', fontSize: '11px' }}>Cached results</span>
+              <span style={{ color: 'var(--terminal-green)', fontFamily: 'monospace', fontSize: '11px' }}>24 hours</span>
+            </div>
           </div>
         </div>
       ),
@@ -705,7 +850,7 @@ const MethodologyView: React.FC = () => {
         <span className="panel-title">Methodology</span>
         <span className="panel-subtitle">Yartseva Quality Factor Model</span>
       </div>
-      <div className="panel-content" style={{ padding: 'var(--space-lg)' }}>
+      <div className="panel-content" style={{ padding: 'var(--space-lg)', overflowY: 'auto', maxHeight: 'calc(100vh - 200px)' }}>
         <div className="faq-container" style={{ maxWidth: '100%' }}>
           {sections.map((section) => (
             <div key={section.id} className="faq-item">
@@ -725,12 +870,12 @@ const MethodologyView: React.FC = () => {
           ))}
 
           <div className="methodology-note" style={{ marginTop: 'var(--space-lg)' }}>
-            <div className="methodology-title">⚠ Disclaimer</div>
+            <div className="methodology-title">⚠ Investment Disclaimer</div>
             <div className="methodology-text">
-              This tool is for educational and research purposes only. Past performance does not 
-              guarantee future results. The Yartseva methodology identifies characteristics common 
-              to historical multibaggers but cannot predict future stock performance. Always conduct 
-              your own due diligence and consider consulting a financial advisor before making 
+              This tool is for educational and research purposes only. Past performance does not
+              guarantee future results. The Yartseva methodology identifies characteristics common
+              to historical multibaggers but cannot predict future stock performance. Always conduct
+              your own due diligence and consider consulting a financial advisor before making
               investment decisions.
             </div>
           </div>
@@ -792,16 +937,20 @@ function AppContent() {
   return (
     <div className="terminal-container terminal-boot">
       <TerminalTopBar activeView={activeView} setActiveView={setActiveView} />
-      <MarketTicker />
 
       <div className="terminal-main">
-        <LeftPanel
-          searchTicker={searchTicker}
-          setSearchTicker={setSearchTicker}
-          onSearch={handleSearch}
-          selectedSector={selectedSector}
-          setSelectedSector={setSelectedSector}
-        />
+        {activeView === 'screener' ? (
+          <ScreenerLeftPanel
+            selectedSector={selectedSector}
+            setSelectedSector={setSelectedSector}
+          />
+        ) : (
+          <LeftPanel
+            searchTicker={searchTicker}
+            setSearchTicker={setSearchTicker}
+            onSearch={handleSearch}
+          />
+        )}
 
         {activeView === 'single' && (
           <>
